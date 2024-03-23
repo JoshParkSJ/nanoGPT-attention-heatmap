@@ -134,7 +134,7 @@ class BigramLanguageModel(nn.Module):
         return logits, loss
 ```
 
-# Transformer Block
+# Transformer Block (Nx)
 
 Self-attention is data communication. Feed forward is data computation (think on all the tokens independently). 
 
@@ -207,7 +207,7 @@ class MultiHeadAttention(nn.Module):
 In *deep* neural networks, especially deep NNs using sigmoid or tanh activations, the gradients can become very small. This is because the derivative of these functions is less than or equal to 1, so when you multiply these small numbers together through many layers during backpropagation, the gradient can decrease exponentially and approach zero. This is called the **vanishing gradient problem** and it makes learning in the early layers very slow or impossible, as the gradients that are backpropagated during training become increasingly small. Another problem is the **information bottleneck**, where the input data gets diluted or lost as it passes through so many layers with random weights and the input data gets lost by the time it reaches the later layers. This can make it difficult for the network to learn complex patterns in the data.
 
 ### Residual Nets
-ResNets address the vanishing gradient with **skip connections, which allow the gradient to be directly backpropagated to earlier layers (backpropagates through both regular pathway and skip connections, not one or the other)**. The network is divided into residual blocks (regular computation is done here), and each block has a skip connection that bypasses one or more layers. The output of the block is the addition of the input and the output of the layers bypassed by the skip connection. Addition operation is crucial because it allows the gradient to be equally distributed to both branches during backpropagation. The **job of the residual block is no longer to figure out everything important about the input that needs to be passed along but rather what information it can add on top of the input to make the subsequent processing easier**. This makes the task of each block simpler and allows it to have access to better information (the original data and the output of the previous residual block). The gradients can also take these shorter paths, which means passing useful gradients back to the earlier layers more quickly. To summarize: 
+ResNets address the vanishing gradient with skip connections, which allow the gradient to be directly backpropagated to earlier layers (backpropagates through both regular pathway and skip connections, not one or the other). The network is divided into residual blocks (regular computation is done here), and each block has a skip connection that bypasses one or more layers. The output of the block is the addition of the input and the output of the layers bypassed by the skip connection. Addition operation is crucial because it allows the gradient to be equally distributed to both branches during backpropagation. The **job of the residual block is no longer to figure out everything important about the input that needs to be passed along but rather what information it can add on top of the input to make the subsequent processing easier**. This makes the task of each block simpler and allows it to have access to better information (the original data and the output of the previous residual block). The gradients can also take these shorter paths, which means passing useful gradients back to the earlier layers more quickly. To summarize: 
 - skip connections help mitigate the vanishing gradient problem by providing an additional pathway for the **gradient to flow through** during backpropagation so that **the earlier layers** can receieve a substantial gradient update during backpropagation
 - skip connections help mitigate the information bottleneck by allowing **input data to flow through** the skip connections and towards **the later layers** instead of the info getting diluted by the many layers of deep NN.
 
@@ -266,24 +266,25 @@ for iter in range(max_iters):
 ```
 
 # Inference
+Take the last `context_length` tokens from the input (since positional embedding is only size `context_length`) and predict the next token. The next token processing returns a logits, which is then converted into a probability distribution via softmax function. Lastly, any token that passes a certain probability threshold is selected as the next token (in GPT models, this threshold is called temperature)
 
 ```python
 class BigramLanguageModel(nn.Module):
     def generate(self, idx, max_new_tokens):
-        # idx is (B, T) array of indices in the current context
+        B, T = idx.shape
+
         for _ in range(max_new_tokens):
-            # crop idx to the last context_length tokens (because positional emedding is only size context_length)
+            # take the last context_length tokens
             idx_cond = idx[:, -context_length:]
-            # get the predictions
+
+            # next token prediction
             logits, loss = self(idx_cond)
-            # focus only on the last time step
-            logits = logits[:, -1, :] # becomes (B, C)
-            # apply softmax to get probabilities
-            probs = F.softmax(logits, dim=-1) # (B, C)
+            logits = logits[:, -1, :] # (B,T,C) -> (B,C)
+            probs = F.softmax(logits, dim=-1) # (B,C)
+
             # sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
-            # append sampled index to the running sequence
-            idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
+            idx_next = torch.multinomial(probs, num_samples=1) # (B,1)            
+            idx = torch.cat((idx, idx_next), dim=1) # (B,T) -> (B,T+1)
         return idx
 ```
 
@@ -291,5 +292,6 @@ To generate text, start with token zero which is just a space character in our v
 
 ```python
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
-print(decode(model.generate(context, max_new_tokens=2000)[0].tolist())) # get 0th idx batch
+
+decode(model.generate(context, max_new_tokens=2000)[0].tolist()) # get 0th idx batch
 ```
