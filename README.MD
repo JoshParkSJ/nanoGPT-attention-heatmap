@@ -14,8 +14,7 @@ If a particular input token has high attention weights across many output tokens
 # Training Data
 Use text file containing shakespeare poems
 ```python
-! wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
-with open('input.txt', 'r', encoding='utf-8') as f:
+with open('./data/input.txt', 'r', encoding='utf-8') as f:
     text = f.read()
 ```
 
@@ -295,3 +294,31 @@ context = torch.zeros((1, 1), dtype=torch.long, device=device)
 
 decode(model.generate(context, max_new_tokens=2000)[0].tolist()) # get 0th idx batch
 ```
+
+# Bonus: how ChatGPT was trained
+
+First, the base model is created (text completion). Then, the base model is finetuned to answer in QnA. Lastly, Reinforcement Learning with Human Feedback (RLHF) is used to improve the accuracy of the model
+
+1. Pretraining
+    - train the base model to predict the next word using transformer architecture with raw internet text/language (lossy compression of the internet/generalization of the internet)
+    - 1000s of GPUs, months of training 
+    - GPT, Llama, PaLM
+    - data is low quality, large quantity (trillions of words)
+2. Supervised Finetuning (SFT)
+    - finetune the base model to answer in QnA format with 10-100k ideal assistant responses created by contractors that follows an answer preference
+    - 1-100 GPUs, days of training
+    - Vicuna-13B
+    - data is high quality, low quantity (10-100k prompts)
+3. Reward Modeling (part 1 of RLHF)
+    - train a reward model to predict the reward/correctness of an answer with 100k-1M prompt comparisons written by contractors. Make SFT model generate multiple answers, contractors rank the answers (which becomes ground truth) and the model tries to predict reward consistent with answer preferences (similar to a classification problem)    
+    - 1-100 GPUs, days of training
+    - data is high quality, low quantity (100k-1M prompts)
+4. Reinforcement Learning (part 2 of RLHF)
+    - trian a RL model by letting SFT model generate response, use reward model to score the response, and reinforce/encourage generated tokens if score is good (model generate tokens that maximize reward)
+    - 1-100 GPUs, days of training
+    - ChatGPT, Claude
+    - data is high quality, low quantity (10-100k prompts)
+
+Why do we use RLHF instead of using smart prompting to make the model answer more correct?
+- since classification/discrimination is an easier problem than generation, training with a reward model (classification model) improves accuracy of LLM than just prompting 
+- however, with RLHF the LLM loses entropy/creativity (mode collapse / lack of diverse answers) 
