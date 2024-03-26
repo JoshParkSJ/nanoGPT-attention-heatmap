@@ -7,9 +7,19 @@
 If a particular input token has high attention weights across many output tokens, that suggests it was important in generating the output.
 
 
+# Transformer Architecture
+
 <div align="center">
     <img src="assets/transformer.png" alt="Transformer architecture" width="500" height="750">
 </div>
+
+Before attention mechanism, RNNs were the main players for natural language models. The famous “Attention is all you need” paper introduced transformers which didn't use any RNN components like recurrence (which caused short-term memory issues) and only relied on attention mechanisms. 
+
+The transformer resembles an encoder-decoder architecture and is an effective architecture for three reasons:
+1. **expressive**: transformers can model complex patterns and relationships in data largely because it **processes all of the input in parallel** (unlike RNNs which process inputs sequentially) and weighs the importance of different inputs differently
+2. **optimizable**: residual connections, layer norms, and softmax functions **address optimization issues such as vanishing gradient problem**
+3. **efficient**: transformers have a **computational graph that is shallow and wide**, which is perfect for gpus (gpus have high memory bandwidth and parallel processing capabilities, unlike cpus which transfer small amounts of data quickly)
+
 
 # Training Data
 Use text file containing shakespeare poems
@@ -80,13 +90,15 @@ Decode: list of ints -> string
 
 2. Positional encoding: similar to input/token embedding, the positional embedding provides positional information of each token in the input sequence (similar to how RNN learns momentum). For example, "dog bites man" has different meaning than "man bites dog". In the original transformer paper, positional embeddings are added to the token emebeddings to create a single input representation that includes information about both token and position of the input.
 
-3. Multi-head self-attention (Nx transformer blocks): can be seen as data communication followed by computation (need time to "think" on the data communication)
+3. Positional info injection: adding token and positinal encoding is a simple way to inject positional information to the token embedding because the addition operation becomes part of the computation graph, and during backpropagation, the gradients will flow back through this operation to both the token embeddings and the positional embeddings. This means that during training, the model can learn to adjust and optimize based on both types of embeddings to minimize the loss function
 
-4. Last layer norm: stabilizes the network (stable training, incremental progress) 
+4. Multi-head self-attention (Nx transformer blocks): can be seen as data communication followed by computation (need time to "think" on the data communication)
 
-5. Last linear layer: output of final pointwise FNN goes through final linear layer which acts as a classifier (clasifier is as big as how many classes you have ⇒ i.e size 10k = 10k word vocab). 
+5. Last layer norm: stabilizes the network (stable training, incremental progress) 
 
-6. Cross-entropy loss function: This function first applies a softmax function to the logits, converting them into probabilities that are positive and sum to 1. It then computes the negative log likelihood loss. Taking the log of the probability, which ranges from 0 to 1, results in a negative value. To ensure a positive loss function, we use negative log likelihood (NLL). This approach also provides a heavy penalty for high confidence in incorrect predictions, making it beneficial for the model's accuracy. The smaller the loss, the better the model's performance.
+6. Last linear layer: output of final pointwise FNN goes through final linear layer which acts as a classifier (clasifier is as big as how many classes you have ⇒ i.e size 10k = 10k word vocab). 
+
+7. Cross-entropy loss function: This function first applies a softmax function to the logits, converting them into probabilities that are positive and sum to 1. It then computes the negative log likelihood loss. Taking the log of the probability, which ranges from 0 to 1, results in a negative value. To ensure a positive loss function, we use negative log likelihood (NLL). This approach also provides a heavy penalty for high confidence in incorrect predictions, making it beneficial for the model's accuracy. The smaller the loss, the better the model's performance.
 
 The final output is a probability score for each class (each unique token) which also means the output is the same size as the vocabulary (probabilitiy for each unique token). On inference, the model takes the highest probable word as the "next predicted word"
 
@@ -112,19 +124,21 @@ class BigramLanguageModel(nn.Module):
         tok_emb = self.token_embedding_table(idx) # (B,T,n_embed)
 
         # 2. positional encoding
-        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,n_embed)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,n_embed) where T=[0,1,...,T-1,T]
+        
+        # 3. positional info injection
         x = tok_emb + pos_emb # (B,T,n_embed)
 
-        # 3. multi-head self-attention (Nx transformer blocks) 
+        # 4. multi-head self-attention (Nx transformer blocks) 
         x = self.blocks(x) # (B,T,n_embed)
 
-        # 4. last layer norm
+        # 5. last layer norm
         x = self.ln_f(x) # (B,T,n_embed)
 
-        # 5. last linear layer
+        # 6. last linear layer
         logits = self.lm_head(x) # (B,T,vocab_size)
 
-        # 6. Cross-entropy loss function (softmax)
+        # 7. Cross-entropy loss function (softmax)
         B, T, C = logits.shape 
         logits = logits.view(B*T, C)
         targets = targets.view(B*T)
@@ -133,12 +147,12 @@ class BigramLanguageModel(nn.Module):
         return logits, loss
 ```
 
-# Transformer Block (Nx)
+# Transformer Block (Communication + Computation)
+A transformer block (can be Nx number of transformer blocks) boils down to data communication followed by computation (need time to "think" on the data communication). Self-attention is the data communication, and feed forward neural network is data computation (think on all the tokens independently).
 
-Self-attention is data communication. Feed forward is data computation (think on all the tokens independently). 
+**Note**: although the original paper applies the layer norm after the self-attention and feed forward layers, modern implementaiton of transformers use pre-norm formulation where the layer norm is applied before the self-attention and feed forward layers.   
 
-Note: although the original paper applies the layer norm after the self-attention and feed forward layers, modern implementaiton of transformers use pre-norm formulation where the layer norm is applied before the self-attention and feed forward layers.   
-
+We add a residual pathway with a simple addition operation (see "addressiong optimization issues" section for why resnet) 
 ```python
 class Block(nn.Module):
     def __init__(self, n_embd, n_head):
@@ -150,20 +164,34 @@ class Block(nn.Module):
         self.ln2 = nn.LayerNorm(n_embd)
 
     def forward(self, x):
-        x = x + self.sa(self.ln1(x)) 
-        x = x + self.ffwd(self.ln2(x))
+        x = x + self.sa(self.ln1(x)) # data-communication
+        x = x + self.ffwd(self.ln2(x)) # data-computation
         return x
 ```
 
+# Self-Attention (Communication)
 
-# !!! Self-Attention !!!
+Goal: at my current token, gather information from the past in a data-dependent way so that only the interesting tokens are picked.
 
+Attention mechanism achieves this by emitting two vectors for every token: Query and Key
+- Query: "what am I looking for"
+- Key: "what do I contain"
+
+The way we get affinity (natural liking) between tokens in a sequence is a **dot product between a query and keys (my query @ keys = weight)**
+
+If query and key are aligned (i.e both have high values in the same channel/vocab), when they dot product they can find each other and create a very high affinity (high value = high prob to be picked). The current token (query) will get to learn more about that specific token (key with high affinity) as supposed to any other token in the sequence.
+
+Value is the actual content of the token. Once the attention scores (affinities) are computed by `q @ k`, then the value is the sum of these weighted values. 
+
+The attention scores are not computed in the original embedding space, but in the transformed space defined by the query and key vectors. The `head_size` parameter controls the dimensionality of the query, key, and value vectors, and thus the complexity of the attention mechanism.  
+
+[See self-attention math here](extra/attention.md)
 
 ```python
 class Head(nn.Module):
     def __init__(self, head_size):
         super().__init__()
-        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.key = nn.Linear(n_embd, head_size, bias=False) # n_embed should match the dimension of token/positional embedding
         self.query = nn.Linear(n_embd, head_size, bias=False)
         self.value = nn.Linear(n_embd, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(context_length, context_length))) # add a persistent buffer (self.tril) to the nn.module which will not be updated during backpropagation
@@ -172,35 +200,81 @@ class Head(nn.Module):
 
     def forward(self, x):
         B,T,C = x.shape
-        k = self.key(x)   # (B,T,C)
-        q = self.query(x) # (B,T,C)
-        # compute attention scores ("affinities")
+
+        k = self.key(x)   # (B,T,C) -> (B,T,head_size)
+        q = self.query(x) # (B,T,C) -> (B,T,head_size)
+
+        # 1. weights = q @ k * constant scale = (B, T number of queries, T number of keys)
         wei = q @ k.transpose(-2,-1) * C**-0.5 # (B, T, C) @ (B, C, T) -> (B, T, T)
+
+        # 2. mask future tokens with triangle matrix
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
-        wei = F.softmax(wei, dim=-1) # (B, T, T)
+        
+        # 3. convert scores to probabilitiy
+        wei = F.softmax(wei, dim=-1) # (B, T, T) 
+        
+        # 4. regularization
         wei = self.dropout(wei)
-        # perform the weighted aggregation of the values
-        v = self.value(x) # (B,T,C)
-        out = wei @ v # (B, T, T) @ (B, T, C) -> (B, T, C)
+
+        # 5. transform input embeddings
+        v = self.value(x) # (B,T,C) -> (B,T,head_size)
+        
+        # 6. perform the weighted aggregation of the values
+        out = wei @ v # (B, T, T) @ (B, T, head_size) -> (B, T, head_size)
+
+        # return weighted aggregation (B, T, head_size)
         return out
 ```
+Note: to implement an "encoder" attention block, simply delete the single line that does masking with `tril`, which allows all tokens to communicate (not just tokens before curr_token, but after as well). Triangular masking is what makes the decoder attention block a "decoder", and is usually used in autoregressive settings, like language modeling.
 
-Multi-head self-attention is 
+Multi-head self-attention runs the heads in parallel and concatenate them together in the channel dimension (`head_size` dimension). The output of the self-attention block gets passed through a residual connection with a linear transformation because the dimension of the input embedding and the self-attention does not match (they need to match to add them together, and the add operation is how a residual pathway forms)
 ```python
 class MultiHeadAttention(nn.Module):
     """ multiple heads of self-attention in parallel """
 
     def __init__(self, num_heads, head_size):
         super().__init__()
-        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)]) # multiple heads in parallel
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
         self.proj = nn.Linear(n_embd, n_embd) # residual connection
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x): # run heads in parallel and concatenate them together in the channel dimension
+    def forward(self, x):
         out = torch.cat([h(x) for h in self.heads], dim=-1) # output of self-attention
-        out = self.dropout(self.proj(out)) # apply projection (projection back into residual pathway). Projection is just a linear transformation of the output of self-attention
+        residual_path = self.proj(out)
+        out = self.dropout(residual_path) 
         return out
 ```
+
+In essence, attention is a **communication mechanism** that can be seen as a directed graph passing data-dependent messages to each other. Each node contains a vector (of channels/vocab) and each node interacts with every other node, including itself, by **computing and aggregating information** from them via a weighted sum. These data-dependent weights determine how much 'attention' each node should pay to every other node. In the case of language model, each node would be a token and each node points to itself and every node before it.
+
+<div align="center">
+    <img src="assets/attention-graph.png" alt="Attention equation" width="250">
+</div>
+
+1. **Self-attention has no notion of space**: self-attention mechanisms compute the output for each element as a weighted sum of all input elements, where the weights are determined by the similarity between the elements. This means that self-attention mechanisms treat all elements equally, regardless of their position in the input sequence. They do not have a built-in notion of space or locality: they do not favor nearby elements over distant ones (whereas CNNs process nearby elements together via conv layer and is therefore spatially aware). Attention simply acts over a set of vectors. This is why we need to positionally encode tokens since each token interacts with all other tokens in a symmetric way, which means it doesn't consider the order of the tokens (model treats sentence as bag of words with no order). Positional encoding helps to add information about the position of the tokens in the sequence to the model (in this repo, we just add the token and positional embeddings. See step 3 in HLO for why this works)
+
+2. **Each example across batch dimension is processed completely independently**: examples in a batch never "talk" to each other
+
+3. **"Self-attention" just means that the keys and values are produced from the same source as queries**: in "cross-attention", the queries still get produced from input, but the keys and values come from some other external source like an encoder module (i.e machine translation would have two types of inputs: french and english)
+
+4. **Scaled attention additionally divides `wei` by `1/sqrt(head_size)`**: without the scaled `1/sqrt(head_size)`, the resulting softmax converges to the highest values and gets too peaky (converges to a one-hot vector). The scale makes it so when input Q,K are in unit variance, wei will also be in unit variance. Hence, softmax will stay diffused and not saturate too much. 
+
+<div align="center">
+    <img src="assets/attention-eq.png" alt="Attention equation" width="400">
+</div>
+
+```python
+# without scale
+torch.softmax(torch.tensor([0.1, -0.2, 0.3, -0.2, 0.5]), dim=-1) = [0.0326, 0.0030, 0.1615, 0.0030, 0.8000]
+
+# with scale
+torch.softmax(torch.tensor([0.1, -0.2, 0.3, -0.2, 0.5]/8), dim=-1) = [0.1925, 0.1426, 0.2351, 0.1426, 0.2872]
+```
+
+# Feed Forward Neural Network (Computation)
+
+[See detailed mathematical explanation here](extra/fnn.md)
+
 
 # Addressing Optimization Issues:
 In *deep* neural networks, especially deep NNs using sigmoid or tanh activations, the gradients can become very small. This is because the derivative of these functions is less than or equal to 1, so when you multiply these small numbers together through many layers during backpropagation, the gradient can decrease exponentially and approach zero. This is called the **vanishing gradient problem** and it makes learning in the early layers very slow or impossible, as the gradients that are backpropagated during training become increasingly small. Another problem is the **information bottleneck**, where the input data gets diluted or lost as it passes through so many layers with random weights and the input data gets lost by the time it reaches the later layers. This can make it difficult for the network to learn complex patterns in the data.
@@ -212,8 +286,9 @@ ResNets address the vanishing gradient with skip connections, which allow the gr
 
 One potential issue with ResNets is shape mismatches between the input and the output of a residual block, since they need to be added together. This is typically addressed by using padding or projection shortcuts.
 
-<img src="assets/resnet.png" alt="Resnet layer">
-
+<div align="center">
+    <img src="assets/resnet.png" alt="Resnet layer">
+</div>
 
 ### Layer Norm
 Very simialr to BatchNorm. Batch normalization makes sure that every column of input (each feature across different samples in a batch) has unit Gaussian distribution (0 mean and 1 sd). LayerNorm, does the same thing but for every row (each feature within a single sample). So, while BatchNorm normalizes across different samples, LayerNorm normalizes within a single sample. In general, BatchNorm works well for CNN with fixed-size inputs like images whereas LayerNorm works better for RNN where the input size changes at each time step
@@ -244,8 +319,9 @@ x = module(x) # (32, 100)
 ### Dropout Layer
 for every forward/backward pass, dropout layer shuts off some random subset of neurons (drops them to zero) and trains without them. Effectively, because the neurons are being dropped off randomly for every forward and backward pass, the neural net ends up training an ensemble of sub-networks. At test time, everything is fully enabled and all of those subnetworks are merged into a single ensemble. Remember that in classical ML, ensemble methods enhance accuracy by utilizing multiple independent networks — the most frequently selected output (through voting) is used as the final output. In essence, dropout layer is a regularization technique which is often used when scaling up a model and we want to fight overfitting.
 
-
-<img src="assets/dropout.png" alt="Dropout layer" style="width:75%; height:auto">
+<div align="center">
+    <img src="assets/dropout.png" alt="Dropout layer" style="width:75%; height:auto">
+</div>
 
 
 # Training
