@@ -185,7 +185,7 @@ Value is the actual content of the token. Once the attention scores (affinities)
 
 The attention scores are not computed in the original embedding space, but in the transformed space defined by the query and key vectors. The `head_size` parameter controls the dimensionality of the query, key, and value vectors, and thus the complexity of the attention mechanism.  
 
-[See self-attention math here](extra/attention.md)
+[See detailed explanation here](extra/attention.md)
 
 ```python
 class Head(nn.Module):
@@ -272,8 +272,9 @@ torch.softmax(torch.tensor([0.1, -0.2, 0.3, -0.2, 0.5]/8), dim=-1) = [0.1925, 0.
 ```
 
 # Feed Forward Neural Network (Computation)
+A simple, fully connected neural network. Each neuron performs a non-linear activation (LeakyRELU, sigmoid, tanh) on the weighted sum of activations from the previous layer (plus a bias). Layers and layers of non-linear activation allows the neural network to learn complex patterns (i.e stacking linear activations is just a regression line). The activation function must be differentiable to be able to form a graident and be compatible with backpropagation.  
 
-[See detailed mathematical explanation here](extra/fnn.md)
+[See detailed explanation here](extra/fnn.md)
 
 
 # Addressing Optimization Issues:
