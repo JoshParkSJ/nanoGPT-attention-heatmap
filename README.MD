@@ -86,13 +86,13 @@ Decode: list of ints -> string
 
 # High-level Overview
 
-1. Input embedding: converts categorical data (tokens) into a form that can be processed by a model (vector). This embedding is simultaneously trianed during the transformer training process, and its goal is to arrange the embeddings in the vector space in such a way that semantically similar words are cloes to each other. The `n_embed` hyperparameter determines the complexity of the embedding.
+1. Input embedding: converts categorical data (tokens) into a form that can be processed by a model (vector). This embedding is simultaneously trianed during the transformer training process, and its goal is to arrange the embeddings in the vector space in such a way that semantically similar words are cloes to each other. The `n_embed` hyperparameter determines the complexity of the embedding. Token embedding is divided evenly among the attention heads in one transformer block.
 
 2. Positional encoding: similar to input/token embedding, the positional embedding provides positional information of each token in the input sequence (similar to how RNN learns momentum). For example, "dog bites man" has different meaning than "man bites dog". In the original transformer paper, positional embeddings are added to the token emebeddings to create a single input representation that includes information about both token and position of the input.
 
 3. Positional info injection: adding token and positinal encoding is a simple way to inject positional information to the token embedding because the addition operation becomes part of the computation graph, and during backpropagation, the gradients will flow back through this operation to both the token embeddings and the positional embeddings. This means that during training, the model can learn to adjust and optimize based on both types of embeddings to minimize the loss function
 
-4. Multi-head self-attention (Nx transformer blocks): can be seen as data communication followed by computation (need time to "think" on the data communication)
+4. Multi-head self-attention (Nx transformer blocks): can be seen as data communication followed by computation (need time to "think" on the data communication). 
 
 5. Last layer norm: stabilizes the network (stable training, incremental progress) 
 
@@ -152,7 +152,7 @@ A transformer block (can be Nx number of transformer blocks) boils down to data 
 
 **Note**: although the original paper applies the layer norm after the self-attention and feed forward layers, modern implementaiton of transformers use pre-norm formulation where the layer norm is applied before the self-attention and feed forward layers.   
 
-We add a residual pathway with a simple addition operation (see "addressiong optimization issues" section for why resnet) 
+We add a residual pathway with a simple addition operation (add operation = residual connection). See "addressiong optimization issues" section for why resnet. 
 ```python
 class Block(nn.Module):
     def __init__(self, n_embd, n_head):
@@ -276,6 +276,20 @@ A simple, fully connected neural network. Each neuron performs a non-linear acti
 
 [See detailed explanation here](extra/fnn.md)
 
+```python
+class FeedFoward(nn.Module):
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd), # inner-layer has multiplier of 4 for more neurons that does computing (just performed best empirically according to "attention is all you need" paper)
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd), # projection layer going back into residual pathway
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+```
 
 # Addressing Optimization Issues:
 In *deep* neural networks, especially deep NNs using sigmoid or tanh activations, the gradients can become very small. This is because the derivative of these functions is less than or equal to 1, so when you multiply these small numbers together through many layers during backpropagation, the gradient can decrease exponentially and approach zero. This is called the **vanishing gradient problem** and it makes learning in the early layers very slow or impossible, as the gradients that are backpropagated during training become increasingly small. Another problem is the **information bottleneck**, where the input data gets diluted or lost as it passes through so many layers with random weights and the input data gets lost by the time it reaches the later layers. This can make it difficult for the network to learn complex patterns in the data.
