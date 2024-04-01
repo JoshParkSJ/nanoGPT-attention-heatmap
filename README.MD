@@ -1,11 +1,15 @@
-# NanoGPT with Simple Interpretability
+# NanoGPT with Next Word Distribution Visualized
 
-1. **Extract Attention Weights**: After you run your input through the model, you can extract the attention weights. These weights are part of the model's internal state, and they essentially show how much the model "paid attention" to each input token when generating each output token.
+Large Language Models (LLM), such as GPT, are designed to predict the next word based on a given input. The predicted word is selected from a range of likely words, a process that is typically not visible to the user. This particular implementation recreates a language model using the transformer architecture from the ground up. This allows us not only to see the distribution of probable next words, but also to compare the selected word with other potential words in that distribution.
 
-2. **Visualize Attention Weights**: You can then visualize these weights as a heatmap, where the x-axis represents input tokens, the y-axis represents output tokens, and the color of each cell represents the attention weight.
-
-If a particular input token has high attention weights across many output tokens, that suggests it was important in generating the output.
-
+# Quick Start
+To generate a random shakespeare poem:
+```
+py main.py
+```
+<div align="center">
+    <img src="assets/quickstart.jpg" alt="Transformer architecture" width="75%">
+</div>
 
 # Transformer Architecture
 
@@ -86,9 +90,9 @@ Decode: list of ints -> string
 
 # High-level Overview
 
-1. Input embedding: converts categorical data (tokens) into a form that can be processed by a model (vector). This embedding is simultaneously trianed during the transformer training process, and its goal is to arrange the embeddings in the vector space in such a way that semantically similar words are cloes to each other. The `n_embed` hyperparameter determines the complexity of the embedding. Token embedding is divided evenly among the attention heads in one transformer block.
+1. Input embedding: converts categorical data (tokens) into a form that can be processed by a model (vector/embedding). This embedding is simultaneously trianed during the transformer training process, and its goal is to arrange the embeddings in the vector space in such a way that semantically similar words are cloes to each other. The `n_embed` hyperparameter determines the complexity of the embedding. When the input `x` with shape `(B,T) = (batch, input_seq)` is passed into the token embedding with shape `(T,C) = (vocab_size, n_embed)` the output is an embedding of shape `(B,T,C) = (batch, input_seq, n_embed)`. Token embedding is divided evenly among the attention heads in one transformer block.
 
-2. Positional encoding: similar to input/token embedding, the positional embedding provides positional information of each token in the input sequence (similar to how RNN learns momentum). For example, "dog bites man" has different meaning than "man bites dog". In the original transformer paper, positional embeddings are added to the token emebeddings to create a single input representation that includes information about both token and position of the input.
+2. Positional encoding: similar to input/token embedding, the positional embedding provides positional information of each token in the **input** sequence (similar to how RNN learns momentum). For example, "dog bites man" has different meaning than "man bites dog". When the input `[0,1,..., input_seq-1, input_seq]` is passed into the positional embedding with shape `(T,C) = (context_length, n_embed)` the output is an embedding of shape `(T,C) = (input_sequence, n_embed)` where each position in the input sequence is replaced by its corresponding embedding vector from the lookup table/positional embedding. In the original transformer paper, positional embeddings are added to the token emebeddings to create a single input representation that includes information about both token and position of the input.
 
 3. Positional info injection: adding token and positinal encoding is a simple way to inject positional information to the token embedding because the addition operation becomes part of the computation graph, and during backpropagation, the gradients will flow back through this operation to both the token embeddings and the positional embeddings. This means that during training, the model can learn to adjust and optimize based on both types of embeddings to minimize the loss function
 
@@ -107,7 +111,7 @@ Note: `(B,T,C)` = (Batch, Time, Channel) = (Batch, Position, n_embed or vocab_si
 Note: logits has shape `(B,T,C)` but pytorch cross_entropy takes in `(B,C,T)`. So we reshape our logits to be a 2D array of `(B*T, C)` but preserve C dimension. We also reshape our target to `B*T`
 
 ```python
-class BigramLanguageModel(nn.Module):
+class LanguageModel(nn.Module):
 
     def __init__(self):
         super().__init__()
@@ -121,32 +125,36 @@ class BigramLanguageModel(nn.Module):
         B, T = idx.shape
 
         # 1. input embedding
-        tok_emb = self.token_embedding_table(idx) # (B,T,n_embed)
+        tok_emb = self.token_embedding_table(idx) # outputs (batch, input_seq, n_embed)
 
         # 2. positional encoding
-        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,n_embed) where T=[0,1,...,T-1,T]
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # outputs (input_seq, n_embed)
         
         # 3. positional info injection
-        x = tok_emb + pos_emb # (B,T,n_embed)
+        x = tok_emb + pos_emb # outputs (batch, input_seq, n_embed)
 
-        # 4. multi-head self-attention (Nx transformer blocks) 
-        x = self.blocks(x) # (B,T,n_embed)
+        # 4. transformer block 
+        x = self.blocks(x) # outputs (batch, input_seq, n_embed)
 
         # 5. last layer norm
-        x = self.ln_f(x) # (B,T,n_embed)
+        x = self.ln_f(x) # outputs (batch, input_seq, n_embed)
 
         # 6. last linear layer
-        logits = self.lm_head(x) # (B,T,vocab_size)
+        logits = self.lm_head(x) # outputs (batch, input_seq, vocab_size)
 
-        # 7. Cross-entropy loss function (softmax)
-        B, T, C = logits.shape 
-        logits = logits.view(B*T, C)
-        targets = targets.view(B*T)
-        loss = F.cross_entropy(logits, targets)
+        if targets is None: 
+            # inference mode
+            loss = None
+        else:
+            # 7. Cross-entropy loss function (softmax)
+            B, T, C = logits.shape
+            logits = logits.view(B*T, C)
+            targets = targets.view(B*T)
+            loss = F.cross_entropy(logits, targets)
 
         return logits, loss
 ```
-
+s
 # Transformer Block (Communication + Computation)
 A transformer block (can be Nx number of transformer blocks) boils down to data communication followed by computation (need time to "think" on the data communication). Self-attention is the data communication, and feed forward neural network is data computation (think on all the tokens independently).
 
@@ -272,7 +280,7 @@ torch.softmax(torch.tensor([0.1, -0.2, 0.3, -0.2, 0.5]/8), dim=-1) = [0.1925, 0.
 ```
 
 # Feed Forward Neural Network (Computation)
-A simple, fully connected neural network. Each neuron performs a non-linear activation (LeakyRELU, sigmoid, tanh) on the weighted sum of activations from the previous layer (plus a bias). Layers and layers of non-linear activation allows the neural network to learn complex patterns (i.e stacking linear activations is just a regression line). The activation function must be differentiable to be able to form a graident and be compatible with backpropagation.  
+A simple linear layer followed by a non-linearity. Each neuron performs a non-linear activation (LeakyRELU, sigmoid, tanh) on the weighted sum of activations from the previous layer (plus a bias). Layers and layers of non-linear activation allows the neural network to learn complex patterns (i.e stacking linear activations is just a regression line). The activation function must be differentiable to be able to form a graident and be compatible with backpropagation. 
 
 [See detailed explanation here](extra/fnn.md)
 
@@ -343,7 +351,7 @@ for every forward/backward pass, dropout layer shuts off some random subset of n
 Typical model training code. Get batch of data, evaluate loss, zero out gradients from optimizer, backpropagation, optimizer takes in gradient and update weights
 
 ```python
-model = BigramLanguageModel()
+model = LanguageModel()
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 for iter in range(max_iters):
@@ -356,12 +364,13 @@ for iter in range(max_iters):
 ```
 
 # Inference
-Take the last `context_length` tokens from the input (since positional embedding is only size `context_length`) and predict the next token. The next token processing returns a logits, which is then converted into a probability distribution via softmax function. Lastly, any token that passes a certain probability threshold is selected as the next token (in GPT models, this threshold is called temperature)
+Take the last `context_length` tokens from the input (since positional embedding is only size `context_length`) and predict the next token. The next token processing returns a logits, which is then converted into a probability distribution via softmax function. Lastly, any token that passes a certain probability threshold is selected as the next token (in GPT models, this threshold is called temperature). Since `torch.multinomial` selects a token randomly that is high in probability, we can choose to set a threshold here so that tokens with probabilities below a ceratin value are removed from the probability distribution.
 
 ```python
-class BigramLanguageModel(nn.Module):
+class LanguageModel(nn.Module):
     def generate(self, idx, max_new_tokens):
         B, T = idx.shape
+        probs_list = [] # needed for visualization purposes
 
         for _ in range(max_new_tokens):
             # take the last context_length tokens
@@ -369,13 +378,14 @@ class BigramLanguageModel(nn.Module):
 
             # next token prediction
             logits, loss = self(idx_cond)
-            logits = logits[:, -1, :] # (B,T,C) -> (B,C)
+            logits = logits[:, -1, :] # (B,T,C) -> (B,C) of last token
             probs = F.softmax(logits, dim=-1) # (B,C)
+            probs_list.append(probs)
 
             # sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1) # (B,1)            
+            idx_next = torch.multinomial(probs, num_samples=1) # (B,1)
             idx = torch.cat((idx, idx_next), dim=1) # (B,T) -> (B,T+1)
-        return idx
+        return idx, probs_list
 ```
 
 To generate text, start with token zero which is just a space character in our vocab. This is like our user prompt. 
@@ -385,6 +395,32 @@ context = torch.zeros((1, 1), dtype=torch.long, device=device)
 
 decode(model.generate(context, max_new_tokens=2000)[0].tolist()) # get 0th idx batch
 ```
+
+# Next Word Probability Distribution
+
+The realisticness of the NanoGPT model's output was constrained by amount of data and compute power. Tokenizing each word (instead of character) would provide a much more cohesive Shakespeare like poem.
+
+Sample output of this NanoGPT model:
+```
+In heaven blench batta, to the patrous scape
+Of what sets ames?
+
+MISTRESS OVERDONE:
+What you have I amain'd.
+
+MERCUTIO:
+Hold, is there foul the night,
+Ounly, I do see thing Ratct I am levy.
+Would think, from your heart, weigh anger?
+
+TYBALLT:
+No, for
+```
+The following plot shows that the actual word sampled for the predicted next word is often not the most probable next word. This behavior is to make the model more undeterministic (in other words, creative) since predicting the highest probable word as the next word would make the model answer the same way every time. A probability threshold for the next word predition can be set by a `temperature` parameter. 
+
+<div align="center">
+    <img src="assets/most_probable_vs_actual.png" alt="Next word probability distribution plot" style="width:75%; height:auto">
+</div>
 
 # Bonus: how ChatGPT was trained
 
