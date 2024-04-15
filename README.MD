@@ -364,7 +364,7 @@ for iter in range(max_iters):
 ```
 
 # Inference
-Take the last `context_length` tokens from the input (since positional embedding is only size `context_length`) and predict the next token. The next token processing returns a logits, which is then converted into a probability distribution via softmax function. Lastly, any token that passes a certain probability threshold is selected as the next token (in GPT models, this threshold is called temperature). Since `torch.multinomial` selects a token randomly that is high in probability, we can choose to set a threshold here so that tokens with probabilities below a ceratin value are removed from the probability distribution.
+Take the last `context_length` tokens from the input (since positional embedding is only size `context_length`) and predict the next token. The next token processing returns a logits, which is then converted into a probability distribution via softmax function. Since `torch.multinomial` selects a token randomly that is high in probability, we can choose to set a threshold here so that tokens with probabilities below a ceratin value are removed from the probability distribution.
 
 ```python
 class LanguageModel(nn.Module):
@@ -416,7 +416,7 @@ Would think, from your heart, weigh anger?
 TYBALLT:
 No, for
 ```
-The following plot shows that the actual word sampled for the predicted next word is often not the most probable next word. This behavior is to make the model more undeterministic (in other words, creative) since predicting the highest probable word as the next word would make the model answer the same way every time. A probability threshold for the next word predition can be set by a `temperature` parameter. 
+The following plot shows that the actual word sampled for the predicted next word is often not the most probable next word. This behavior is to make the model more undeterministic (in other words, creative) since predicting the highest probable word as the next word would make the model answer the same way every time.
 
 <div align="center">
     <img src="assets/most_probable_vs_actual.png" alt="Next word probability distribution plot" style="width:75%; height:auto">
